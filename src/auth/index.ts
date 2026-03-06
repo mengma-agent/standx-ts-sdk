@@ -10,7 +10,7 @@ export class Auth {
    * Generate JWT token from wallet private key
    */
   static generateJwt(
-    privateKey: string,
+    _privateKey: string,
     walletAddress: string,
     options: {
       permissions?: string[];

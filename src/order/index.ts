@@ -69,7 +69,7 @@ export class OrderAPI {
    */
   async cancel(orderId: string, symbol: string): Promise<Order> {
     const data = await this.request<any>('/api/cancel_order', 'POST', {
-      order_id: orderId,
+      orderId,
       symbol,
     });
 
@@ -103,10 +103,7 @@ export class OrderAPI {
    * Get order details
    */
   async getOrder(orderId: string, symbol: string): Promise<Order> {
-    const data = await this.request<any>('/api/query_order', {
-      order_id: orderId,
-      symbol,
-    });
+    const data = await this.request<any>(`/api/query_order?order_id=${orderId}&symbol=${symbol}`);
 
     return {
       id: data.id || orderId,

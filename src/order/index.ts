@@ -1,4 +1,5 @@
 import type { CreateOrderParams, Order } from '../types';
+import { APIError, TimeoutError, AuthError, ValidationError } from '../errors';
 
 const DEFAULT_API_URL = 'https://perps.standx.com';
 
@@ -17,29 +18,74 @@ export class OrderAPI {
     this.jwt = options.jwt;
   }
 
-  private async request<T>(endpoint: string, method: string = 'GET', body?: any): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.jwt}`,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.timeout),
-    });
+  /**
+   * Validate order parameters
+   */
+  private validateOrderParams(params: CreateOrderParams): void {
+    if (!params.symbol) {
+      throw new ValidationError('Symbol is required');
+    }
+    if (!params.side || !['buy', 'sell'].includes(params.side)) {
+      throw new ValidationError('Side must be "buy" or "sell"');
+    }
+    if (!params.orderType || !['limit', 'market'].includes(params.orderType)) {
+      throw new ValidationError('OrderType must be "limit" or "market"');
+    }
+    if (!params.qty || parseFloat(params.qty) <= 0) {
+      throw new ValidationError('Quantity must be a positive number');
+    }
+    if (params.orderType === 'limit' && (!params.price || parseFloat(params.price) <= 0)) {
+      throw new ValidationError('Price is required for limit orders');
+    }
+  }
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`Order Error: ${response.status} - ${error.message || response.statusText}`);
+  private async request<T>(endpoint: string, method: string = 'GET', body?: any): Promise<T> {
+    if (!this.jwt) {
+      throw new AuthError('JWT token is required for order operations');
     }
 
-    return response.json();
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.jwt}`,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(this.timeout),
+      });
+
+      if (response.status === 401) {
+        throw new AuthError('Invalid or expired JWT token');
+      }
+
+      if (!response.ok) {
+        let errorDetails: any = {};
+        try {
+          errorDetails = await response.json();
+        } catch { /* ignore */ }
+        throw new APIError(
+          errorDetails.message || `Order Error: ${response.status}`,
+          response.status,
+          errorDetails
+        );
+      }
+
+      return response.json();
+    } catch (err: any) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+        throw new TimeoutError('Request timeout', { endpoint, method, body });
+      }
+      if (err instanceof APIError || err instanceof AuthError || err instanceof ValidationError) throw err;
+      throw new APIError(err.message || 'Unknown error', undefined, { endpoint, method, body, originalError: err });
+    }
   }
 
   /**
    * Create a new order
    */
   async create(params: CreateOrderParams): Promise<Order> {
+    this.validateOrderParams(params);
     const data = await this.request<any>('/api/place_order', 'POST', {
       symbol: params.symbol,
       side: params.side,

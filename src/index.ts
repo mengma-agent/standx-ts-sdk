@@ -87,4 +87,5 @@ export class StandXClient {
 }
 
 export { Auth } from './auth';
+export * from './errors';
 export * from './types';

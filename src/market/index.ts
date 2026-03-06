@@ -1,4 +1,5 @@
 import type { Ticker, OrderBook, Trade, Kline, SymbolInfo, FundingRate } from '../types';
+import { APIError, TimeoutError, ValidationError } from '../errors';
 
 const DEFAULT_API_URL = 'https://perps.standx.com';
 
@@ -14,28 +15,56 @@ export class MarketAPI {
   private async request<T>(endpoint: string, params: Record<string, string> = {}): Promise<T> {
     const url = new URL(`${this.baseUrl}${endpoint}`);
     Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.append(key, value);
+      if (value !== undefined && value !== '') {
+        url.searchParams.append(key, value);
+      }
     });
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(this.timeout),
-    });
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(this.timeout),
+      });
 
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        let errorDetails: any = {};
+        try {
+          errorDetails = await response.json();
+        } catch { /* ignore */ }
+        throw new APIError(
+          errorDetails.message || `API Error: ${response.status} ${response.statusText}`,
+          response.status,
+          errorDetails
+        );
+      }
+
+      return response.json();
+    } catch (err: any) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+        throw new TimeoutError('Request timeout', { endpoint, params });
+      }
+      if (err instanceof APIError) throw err;
+      throw new APIError(err.message || 'Unknown error', undefined, { endpoint, params, originalError: err });
     }
+  }
 
-    return response.json();
+  /**
+   * Validate symbol parameter
+   */
+  private validateSymbol(symbol: string): void {
+    if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') {
+      throw new ValidationError('Symbol is required and must be a non-empty string', { symbol });
+    }
   }
 
   /**
    * Get ticker for a symbol
    */
   async ticker(symbol: string): Promise<Ticker> {
+    this.validateSymbol(symbol);
     const data = await this.request<any>('/api/query_symbol_price', { symbol });
     return {
       symbol: data.symbol || symbol,

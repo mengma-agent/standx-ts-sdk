@@ -1,4 +1,5 @@
 import type { Balance, Position, Order, OrderStatus } from '../types';
+import { APIError, TimeoutError, AuthError } from '../errors';
 
 const DEFAULT_API_URL = 'https://perps.standx.com';
 
@@ -18,25 +19,51 @@ export class AccountAPI {
   }
 
   private async request<T>(endpoint: string, params: Record<string, string> = {}): Promise<T> {
-    const url = new URL(`${this.baseUrl}${endpoint}`);
-    Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.append(key, value);
-    });
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.jwt}`,
-      },
-      signal: AbortSignal.timeout(this.timeout),
-    });
-
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    if (!this.jwt) {
+      throw new AuthError('JWT token is required for authenticated endpoints');
     }
 
-    return response.json();
+    const url = new URL(`${this.baseUrl}${endpoint}`);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') {
+        url.searchParams.append(key, value);
+      }
+    });
+
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.jwt}`,
+        },
+        signal: AbortSignal.timeout(this.timeout),
+      });
+
+      if (response.status === 401) {
+        throw new AuthError('Invalid or expired JWT token');
+      }
+
+      if (!response.ok) {
+        let errorDetails: any = {};
+        try {
+          errorDetails = await response.json();
+        } catch { /* ignore */ }
+        throw new APIError(
+          errorDetails.message || `API Error: ${response.status} ${response.statusText}`,
+          response.status,
+          errorDetails
+        );
+      }
+
+      return response.json();
+    } catch (err: any) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+        throw new TimeoutError('Request timeout', { endpoint, params });
+      }
+      if (err instanceof APIError || err instanceof AuthError) throw err;
+      throw new APIError(err.message || 'Unknown error', undefined, { endpoint, params, originalError: err });
+    }
   }
 
   /**

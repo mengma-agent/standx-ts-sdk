@@ -1,0 +1,123 @@
+import type { CreateOrderParams, Order } from '../types';
+
+const DEFAULT_API_URL = 'https://perps.standx.com';
+
+export class OrderAPI {
+  private baseUrl: string;
+  private timeout: number;
+  private jwt: string;
+
+  constructor(options: {
+    baseUrl?: string;
+    timeout?: number;
+    jwt: string;
+  }) {
+    this.baseUrl = options.baseUrl || DEFAULT_API_URL;
+    this.timeout = options.timeout || 30000;
+    this.jwt = options.jwt;
+  }
+
+  private async request<T>(endpoint: string, method: string = 'GET', body?: any): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.jwt}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(this.timeout),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(`Order Error: ${response.status} - ${error.message || response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Create a new order
+   */
+  async create(params: CreateOrderParams): Promise<Order> {
+    const data = await this.request<any>('/api/place_order', 'POST', {
+      symbol: params.symbol,
+      side: params.side,
+      order_type: params.orderType,
+      qty: params.qty,
+      price: params.price,
+      time_in_force: params.timeInForce || 'gtc',
+      tp_price: params.tpPrice,
+      sl_price: params.slPrice,
+    });
+
+    return {
+      id: data.id || data.order_id || '',
+      symbol: data.symbol || params.symbol,
+      side: data.side === 'buy' ? 'buy' : 'sell',
+      orderType: data.order_type || data.type || params.orderType,
+      qty: data.qty || params.qty,
+      fillQty: data.fill_qty || '0',
+      price: data.price || params.price || '0',
+      status: data.status || 'new',
+      createdAt: data.created_at || new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Cancel an order
+   */
+  async cancel(orderId: string, symbol: string): Promise<Order> {
+    const data = await this.request<any>('/api/cancel_order', 'POST', {
+      order_id: orderId,
+      symbol,
+    });
+
+    return {
+      id: data.id || orderId,
+      symbol: data.symbol || symbol,
+      side: data.side || 'buy',
+      orderType: data.order_type || 'limit',
+      qty: data.qty || '0',
+      fillQty: data.fill_qty || '0',
+      price: data.price || '0',
+      status: 'canceled',
+      createdAt: data.created_at || '',
+    };
+  }
+
+  /**
+   * Cancel all orders
+   */
+  async cancelAll(symbol?: string): Promise<{ cancelled: number }> {
+    const data = await this.request<any>('/api/cancel_all_orders', 'POST', {
+      symbol: symbol || '',
+    });
+
+    return {
+      cancelled: data.cancelled || data.count || 0,
+    };
+  }
+
+  /**
+   * Get order details
+   */
+  async getOrder(orderId: string, symbol: string): Promise<Order> {
+    const data = await this.request<any>('/api/query_order', {
+      order_id: orderId,
+      symbol,
+    });
+
+    return {
+      id: data.id || orderId,
+      symbol: data.symbol || symbol,
+      side: data.side === 'buy' ? 'buy' : 'sell',
+      orderType: data.order_type || data.type || 'limit',
+      qty: data.qty || '0',
+      fillQty: data.fill_qty || '0',
+      price: data.price || '0',
+      status: data.status || 'new',
+      createdAt: data.created_at || '',
+    };
+  }
+}

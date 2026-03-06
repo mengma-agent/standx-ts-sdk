@@ -30,8 +30,13 @@ export class Auth {
 
     // Note: Actual JWT signing requires wallet signature
     // This is a placeholder - actual implementation depends on StandX auth flow
-    const token = Buffer.from(JSON.stringify(payload)).toString('base64');
-    return token;
+    // Create a simple JWT format (header.payload.signature)
+    const header = { alg: 'none', typ: 'JWT' };
+    const headerEncoded = Buffer.from(JSON.stringify(header)).toString('base64url');
+    const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = Buffer.from('unsigned').toString('base64url');
+    
+    return `${headerEncoded}.${payloadEncoded}.${signature}`;
   }
 
   /**
